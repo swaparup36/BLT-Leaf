@@ -774,12 +774,18 @@ async def fetch_repo_open_pr_numbers(owner, repo, token=None):
     return {pr['number'] for pr in prs}
 
 
-async def fetch_repo_open_prs(owner, repo, token=None):
+async def fetch_repo_open_prs(owner, repo, token=None, include_metadata=False):
     """
     Fetch all open PRs for a repository via GraphQL with pagination.
 
     Returns a list of dictionaries with fields required for repo-level refresh,
     including head/base refs needed to compute behind_by in batch.
+
+    When include_metadata=True, returns:
+        {
+            'prs': [...],
+            'repo_is_private': bool
+        }
     """
     graphql_url = "https://api.github.com/graphql"
     headers = {
@@ -793,6 +799,7 @@ async def fetch_repo_open_prs(owner, repo, token=None):
     query = """
     query($owner: String!, $repo: String!, $cursor: String) {
       repository(owner: $owner, name: $repo) {
+                isPrivate
         pullRequests(states: OPEN, first: 100, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC}) {
           nodes {
             number
@@ -821,6 +828,7 @@ async def fetch_repo_open_prs(owner, repo, token=None):
     """
 
     all_nodes = []
+    repo_is_private = False
     cursor = None
     has_next_page = True
 
@@ -856,6 +864,8 @@ async def fetch_repo_open_prs(owner, repo, token=None):
         repository_data = result.get('data', {}).get('repository')
         if not repository_data:
             raise Exception(f"GraphQL open PR query returned no repository for {owner}/{repo}")
+
+        repo_is_private = bool(repository_data.get('isPrivate', False))
         pr_data = repository_data.get('pullRequests', {})
         nodes = pr_data.get('nodes', [])
         page_info = pr_data.get('pageInfo', {})
@@ -863,6 +873,12 @@ async def fetch_repo_open_prs(owner, repo, token=None):
         all_nodes.extend(nodes)
         has_next_page = bool(page_info.get('hasNextPage'))
         cursor = page_info.get('endCursor')
+
+    if include_metadata:
+        return {
+            'prs': all_nodes,
+            'repo_is_private': repo_is_private,
+        }
 
     return all_nodes
 
